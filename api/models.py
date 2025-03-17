@@ -76,7 +76,7 @@ class Order(models.Model):
     date = models.DateTimeField(auto_now_add=True)
     total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     # "price_item" is unclear in the diagram, but if needed:
-    price_item = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    # price_item = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     status = models.CharField(max_length=50, blank=True)
     payment_method = models.CharField(max_length=50, blank=True)
 
@@ -88,6 +88,8 @@ class Contain(models.Model):
 
     order = models.ForeignKey(Order, on_delete=models.CASCADE)
     item = models.ForeignKey(Item, on_delete=models.CASCADE)
+    quantity = models.PositiveIntegerField()
+
 
     def __str__(self):
         return f"{self.item.menu.name} contains {self.item.name}"

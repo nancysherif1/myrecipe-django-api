@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework.authtoken',
     'api',
+    'corsheaders', # remove this line when deploying to production
 ]
 
 MIDDLEWARE = [
@@ -50,6 +51,12 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'corsheaders.middleware.CorsMiddleware', # remove this line when deploying to production
+]
+
+# remove this line when deploying to production
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:58488",  # Replace with your frontend domain
 ]
 
 ROOT_URLCONF = 'myrecipe.urls'

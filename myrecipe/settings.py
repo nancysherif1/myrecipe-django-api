@@ -57,6 +57,7 @@ MIDDLEWARE = [
 # remove this line when deploying to production
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:58488",  # Replace with your frontend domain
+    "http://localhost:61729",  # Replace with your frontend domain
 ]
 
 ROOT_URLCONF = 'myrecipe.urls'

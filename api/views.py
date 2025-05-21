@@ -9,7 +9,7 @@ from django.contrib.auth.tokens import default_token_generator
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from django.utils.encoding import force_bytes, force_str
 from django.core.mail import send_mail
-from .models import Order, Menu, Item, Contain, Vendor
+from .models import Order, Menu, Item, Contain, Vendor, Cart, CartItem
 from django.db.models import Sum, F, Count
 
 from .serializers import (
@@ -21,6 +21,7 @@ from .serializers import (
     VendorRegistrationSerializer,
     CustomerSerializer,
     VendorSerializer,
+    CartSerializer,
 )
 from .models import Customer, Vendor
 
@@ -258,3 +259,42 @@ class CustomerMenusView(APIView):
             result.append(vendor_data)
         
         return Response(result)
+    # made by me
+class CartView(APIView):
+        permission_classes = [IsAuthenticated]
+    
+        def get(self, request):
+            customer = getattr(request.user, 'customer', None)
+            if not customer:
+                return Response({'error': 'Only customers have carts.'}, status=403)
+    
+            cart, created = Cart.objects.get_or_create(customer=customer)
+            serializer = CartSerializer(cart)
+            return Response(serializer.data)
+    
+        def post(self, request):
+            customer = getattr(request.user, 'customer', None)
+            if not customer:
+                return Response({'error': 'Only customers can add to cart.'}, status=403)
+    
+            item_id = request.data.get('item_id')
+            quantity = int(request.data.get('quantity', 1))
+    
+            if not item_id:
+                return Response({'error': 'Item ID is required.'}, status=400)
+    
+            try:
+                item = Item.objects.get(id=item_id)
+            except Item.DoesNotExist:
+                return Response({'error': 'Item not found.'}, status=404)
+    
+            cart, _ = Cart.objects.get_or_create(customer=customer)
+            cart_item, created = CartItem.objects.get_or_create(cart=cart, item=item)
+    
+            if not created:
+                cart_item.quantity += quantity
+            else:
+                cart_item.quantity = quantity
+            cart_item.save()
+    
+            return Response({'message': f"{item.name} added to cart."})

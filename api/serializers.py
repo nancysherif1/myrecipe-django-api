@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
 from .models import Customer, Vendor, Employee
+from .models import Cart, CartItem
 
 class UserDetailSerializer(serializers.ModelSerializer):
     user_type = serializers.SerializerMethodField()
@@ -99,3 +100,18 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
     uid = serializers.CharField()
     token = serializers.CharField()
     new_password = serializers.CharField()
+# made by me
+class CartItemSerializer(serializers.ModelSerializer):
+    itemName = serializers.CharField(source='item.name', read_only=True)
+    price = serializers.DecimalField(source='item.price', max_digits=10, decimal_places=2, read_only=True)
+
+    class Meta:
+        model = CartItem
+        fields = ['id', 'item', 'itemName', 'price', 'quantity']
+
+class CartSerializer(serializers.ModelSerializer):
+    items = CartItemSerializer(many=True)
+
+    class Meta:
+        model = Cart
+        fields = ['id', 'customer', 'items']

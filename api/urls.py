@@ -9,7 +9,8 @@ from .views import (
     VendorRegistrationView,
     UserProfileView,
     VendorOrdersView,
-    CustomerMenusView
+    CustomerMenusView,
+    CartView,
 )
 
 urlpatterns = [
@@ -30,4 +31,6 @@ urlpatterns = [
     # Vendor and Customer specific routes
     path('vendor/orders/', VendorOrdersView.as_view(), name='vendor-orders'),
     path('customer/menus/', CustomerMenusView.as_view(), name='customer-menus'),
+    #  made by me
+    path('cart/', CartView.as_view(), name='cart'),
 ]

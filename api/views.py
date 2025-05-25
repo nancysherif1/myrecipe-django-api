@@ -22,6 +22,7 @@ from .serializers import (
     CustomerSerializer,
     VendorSerializer,
     CartSerializer,
+    CartItemSerializer,
 )
 from .models import Customer, Vendor
 
@@ -259,42 +260,240 @@ class CustomerMenusView(APIView):
             result.append(vendor_data)
         
         return Response(result)
-    # made by me
+
+# Cart functionality - Fixed and completed
 class CartView(APIView):
-        permission_classes = [IsAuthenticated]
-    
-        def get(self, request):
-            customer = getattr(request.user, 'customer', None)
-            if not customer:
-                return Response({'error': 'Only customers have carts.'}, status=403)
-    
-            cart, created = Cart.objects.get_or_create(customer=customer)
-            serializer = CartSerializer(cart)
-            return Response(serializer.data)
-    
-        def post(self, request):
-            customer = getattr(request.user, 'customer', None)
-            if not customer:
-                return Response({'error': 'Only customers can add to cart.'}, status=403)
-    
-            item_id = request.data.get('item_id')
-            quantity = int(request.data.get('quantity', 1))
-    
-            if not item_id:
-                return Response({'error': 'Item ID is required.'}, status=400)
-    
-            try:
-                item = Item.objects.get(id=item_id)
-            except Item.DoesNotExist:
-                return Response({'error': 'Item not found.'}, status=404)
-    
-            cart, _ = Cart.objects.get_or_create(customer=customer)
-            cart_item, created = CartItem.objects.get_or_create(cart=cart, item=item)
-    
-            if not created:
-                cart_item.quantity += quantity
-            else:
-                cart_item.quantity = quantity
+    """
+    Handle cart operations: GET (display), POST (add items)
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """Display cart contents"""
+        customer = getattr(request.user, 'customer', None)
+        if not customer:
+            return Response({'error': 'Only customers have carts.'}, status=status.HTTP_403_FORBIDDEN)
+
+        cart, created = Cart.objects.get_or_create(customer=customer)
+        
+        # Calculate cart total
+        cart_items = cart.items.all()
+        total = sum(item.item.price * item.quantity for item in cart_items)
+        
+        # Serialize cart data
+        serializer = CartSerializer(cart)
+        response_data = serializer.data
+        response_data['total'] = float(total)
+        response_data['item_count'] = cart_items.count()
+        
+        return Response(response_data)
+
+    def post(self, request):
+        """Add item to cart"""
+        customer = getattr(request.user, 'customer', None)
+        if not customer:
+            return Response({'error': 'Only customers can add to cart.'}, status=status.HTTP_403_FORBIDDEN)
+
+        item_id = request.data.get('item_id')
+        quantity = request.data.get('quantity', 1)
+        
+        # Validate quantity
+        try:
+            quantity = int(quantity)
+            if quantity < 1:
+                return Response({'error': 'Quantity must be at least 1.'}, status=status.HTTP_400_BAD_REQUEST)
+        except (TypeError, ValueError):
+            return Response({'error': 'Invalid quantity.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not item_id:
+            return Response({'error': 'Item ID is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            item = Item.objects.get(id=item_id)
+        except Item.DoesNotExist:
+            return Response({'error': 'Item not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        cart, _ = Cart.objects.get_or_create(customer=customer)
+        cart_item, created = CartItem.objects.get_or_create(cart=cart, item=item)
+
+        if not created:
+            cart_item.quantity += quantity
+        else:
+            cart_item.quantity = quantity
+
+        cart_item.save()
+
+        return Response({
+            'message': f"{item.name} added to cart.",
+            'item_name': item.name,
+            'quantity_in_cart': cart_item.quantity
+        }, status=status.HTTP_200_OK)
+
+
+class CartItemView(APIView):
+    """
+    Handle individual cart item operations: PUT (update), DELETE (remove)
+    """
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request, item_id):
+        """Update quantity of item in cart"""
+        customer = getattr(request.user, 'customer', None)
+        if not customer:
+            return Response({'error': 'Only customers can modify cart.'}, status=status.HTTP_403_FORBIDDEN)
+
+        quantity = request.data.get('quantity')
+        
+        # Validate quantity
+        try:
+            quantity = int(quantity)
+            if quantity < 1:
+                return Response({'error': 'Quantity must be at least 1.'}, status=status.HTTP_400_BAD_REQUEST)
+        except (TypeError, ValueError):
+            return Response({'error': 'Invalid quantity.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            cart = Cart.objects.get(customer=customer)
+            cart_item = CartItem.objects.get(cart=cart, item_id=item_id)
+            
+            cart_item.quantity = quantity
             cart_item.save()
-    
-            return Response({'message': f"{item.name} added to cart."})
+            
+            return Response({
+                'message': f"Updated {cart_item.item.name} quantity to {quantity}.",
+                'item_name': cart_item.item.name,
+                'new_quantity': quantity
+            }, status=status.HTTP_200_OK)
+            
+        except Cart.DoesNotExist:
+            return Response({'error': 'Cart not found.'}, status=status.HTTP_404_NOT_FOUND)
+        except CartItem.DoesNotExist:
+            return Response({'error': 'Item not found in cart.'}, status=status.HTTP_404_NOT_FOUND)
+
+    def delete(self, request, item_id):
+        """Remove item from cart"""
+        customer = getattr(request.user, 'customer', None)
+        if not customer:
+            return Response({'error': 'Only customers can modify cart.'}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            cart = Cart.objects.get(customer=customer)
+            cart_item = CartItem.objects.get(cart=cart, item_id=item_id)
+            
+            item_name = cart_item.item.name
+            cart_item.delete()
+            
+            return Response({
+                'message': f"{item_name} removed from cart."
+            }, status=status.HTTP_200_OK)
+            
+        except Cart.DoesNotExist:
+            return Response({'error': 'Cart not found.'}, status=status.HTTP_404_NOT_FOUND)
+        except CartItem.DoesNotExist:
+            return Response({'error': 'Item not found in cart.'}, status=status.HTTP_404_NOT_FOUND)
+
+
+class CartClearView(APIView):
+    """
+    Clear all items from cart
+    """
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request):
+        """Clear entire cart"""
+        customer = getattr(request.user, 'customer', None)
+        if not customer:
+            return Response({'error': 'Only customers can clear cart.'}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            cart = Cart.objects.get(customer=customer)
+            items_count = cart.items.count()
+            cart.items.all().delete()
+            
+            return Response({
+                'message': f"Cart cleared. {items_count} items removed."
+            }, status=status.HTTP_200_OK)
+            
+        except Cart.DoesNotExist:
+            return Response({
+                'message': 'Cart is already empty.'
+            }, status=status.HTTP_200_OK)
+
+
+class CheckoutView(APIView):
+    """
+    Handle cart checkout - convert cart items to order
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        """Process checkout and create order"""
+        customer = getattr(request.user, 'customer', None)
+        if not customer:
+            return Response({'error': 'Only customers can checkout.'}, status=status.HTTP_403_FORBIDDEN)
+
+        # Get payment method from request (optional)
+        payment_method = request.data.get('payment_method', 'Cash')
+        
+        try:
+            cart = Cart.objects.get(customer=customer)
+            cart_items = cart.items.all()
+            
+            # Check if cart is empty
+            if not cart_items.exists():
+                return Response({'error': 'Cart is empty. Cannot checkout.'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Calculate total amount
+            total_amount = sum(item.item.price * item.quantity for item in cart_items)
+            
+            # Create the order
+            order = Order.objects.create(
+                customer=customer,
+                total_amount=total_amount,
+                status='Pending',
+                payment_method=payment_method
+            )
+            
+            # Create order items (Contain relationships)
+            order_items_created = []
+            for cart_item in cart_items:
+                contain = Contain.objects.create(
+                    order=order,
+                    item=cart_item.item,
+                    quantity=cart_item.quantity
+                )
+                order_items_created.append({
+                    'item_name': cart_item.item.name,
+                    'quantity': cart_item.quantity,
+                    'price': float(cart_item.item.price),
+                    'subtotal': float(cart_item.item.price * cart_item.quantity),
+                    'vendor': cart_item.item.vendor.name
+                })
+            
+            # Clear the cart after successful checkout
+            cart.items.all().delete()
+            
+            # Prepare response data
+            response_data = {
+                'message': 'Checkout successful!',
+                'order': {
+                    'order_id': order.id,
+                    'customer_name': customer.name,
+                    'order_date': order.date,
+                    'total_amount': float(order.total_amount),
+                    'status': order.status,
+                    'payment_method': order.payment_method,
+                    'items': order_items_created,
+                    'item_count': len(order_items_created)
+                }
+            }
+            
+            return Response(response_data, status=status.HTTP_201_CREATED)
+            
+        except Cart.DoesNotExist:
+            return Response({'error': 'Cart not found or is empty.'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'error': 'Checkout failed. Please try again.',
+                'details': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

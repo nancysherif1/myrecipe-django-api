@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import Customer, Vendor, Employee
-from .models import Cart, CartItem
+from .models import Customer, Vendor
+from .models import Cart, CartItem, Item
 
 class UserDetailSerializer(serializers.ModelSerializer):
     user_type = serializers.SerializerMethodField()
@@ -100,18 +100,43 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
     uid = serializers.CharField()
     token = serializers.CharField()
     new_password = serializers.CharField()
-# made by me
-class CartItemSerializer(serializers.ModelSerializer):
-    itemName = serializers.CharField(source='item.name', read_only=True)
-    price = serializers.DecimalField(source='item.price', max_digits=10, decimal_places=2, read_only=True)
 
+# Cart Serializers - Enhanced
+class CartItemSerializer(serializers.ModelSerializer):
+    item_name = serializers.CharField(source='item.name', read_only=True)
+    item_price = serializers.DecimalField(source='item.price', max_digits=10, decimal_places=2, read_only=True)
+    subtotal = serializers.SerializerMethodField()
+    vendor_name = serializers.CharField(source='item.vendor.name', read_only=True)
+    
     class Meta:
         model = CartItem
-        fields = ['id', 'item', 'itemName', 'price', 'quantity']
+        fields = ['id', 'item', 'item_name', 'item_price', 'quantity', 'subtotal', 'vendor_name']
+        read_only_fields = ['id', 'item_name', 'item_price', 'subtotal', 'vendor_name']
+    
+    def get_subtotal(self, obj):
+        return float(obj.item.price * obj.quantity)
 
 class CartSerializer(serializers.ModelSerializer):
-    items = CartItemSerializer(many=True)
-
+    items = CartItemSerializer(many=True, read_only=True)
+    total_items = serializers.SerializerMethodField()
+    total_price = serializers.SerializerMethodField()
+    
     class Meta:
         model = Cart
-        fields = ['id', 'customer', 'items']
+        fields = ['id', 'customer', 'items', 'total_items', 'total_price']
+        read_only_fields = ['id', 'customer', 'total_items', 'total_price']
+    
+    def get_total_items(self, obj):
+        return sum(item.quantity for item in obj.items.all())
+    
+    def get_total_price(self, obj):
+        return float(sum(item.item.price * item.quantity for item in obj.items.all()))
+
+# Additional serializer for item details when adding to cart
+class ItemSerializer(serializers.ModelSerializer):
+    vendor_name = serializers.CharField(source='vendor.name', read_only=True)
+    
+    class Meta:
+        model = Item
+        fields = ['id', 'name', 'price', 'description', 'vendor_name']
+        read_only_fields = ['id', 'name', 'price', 'description', 'vendor_name']

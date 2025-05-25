@@ -11,6 +11,9 @@ from .views import (
     VendorOrdersView,
     CustomerMenusView,
     CartView,
+    CartItemView,
+    CartClearView,
+    CheckoutView,
 )
 
 urlpatterns = [
@@ -31,6 +34,10 @@ urlpatterns = [
     # Vendor and Customer specific routes
     path('vendor/orders/', VendorOrdersView.as_view(), name='vendor-orders'),
     path('customer/menus/', CustomerMenusView.as_view(), name='customer-menus'),
-    #  made by me
-    path('cart/', CartView.as_view(), name='cart'),
+    
+    # Cart routes
+    path('cart/', CartView.as_view(), name='cart'),  # GET: display cart, POST: add item
+    path('cart/item/<int:item_id>/', CartItemView.as_view(), name='cart-item'),  # PUT: update quantity, DELETE: remove item
+    path('cart/clear/', CartClearView.as_view(), name='cart-clear'),  # DELETE: clear entire cart
+    path('cart/checkout/', CheckoutView.as_view(), name='checkout'),  # POST: process checkout
 ]

@@ -1,5 +1,6 @@
 from django.urls import path
 from .views import (
+    CustomerOrdersView,
     RegisterView, 
     LoginView, 
     PasswordResetRequestView,
@@ -40,4 +41,6 @@ urlpatterns = [
     path('cart/item/<int:item_id>/', CartItemView.as_view(), name='cart-item'),  # PUT: update quantity, DELETE: remove item
     path('cart/clear/', CartClearView.as_view(), name='cart-clear'),  # DELETE: clear entire cart
     path('cart/checkout/', CheckoutView.as_view(), name='checkout'),  # POST: process checkout
+
+    path('customer/orders/', CustomerOrdersView.as_view(), name='customer-orders'),
 ]

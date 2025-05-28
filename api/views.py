@@ -497,3 +497,97 @@ class CheckoutView(APIView):
                 'error': 'Checkout failed. Please try again.',
                 'details': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+class CustomerOrdersView(APIView):
+    """
+    Endpoint to get orders for a customer
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        # Check if user is a customer
+        if not hasattr(request.user, 'customer'):
+            return Response(
+                {"error": "Only customers can access this endpoint"}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        customer = request.user.customer
+        
+        # Get all orders for this customer
+        orders = Order.objects.filter(customer=customer).order_by('-date')
+        
+        orders_data = []
+        
+        for order in orders:
+            # Get all items in this order with their details
+            order_contains = Contain.objects.filter(order=order).select_related('item', 'item__vendor')
+            
+            # Get item details
+            items_details = []
+            for oc in order_contains:
+                items_details.append({
+                    "itemId": oc.item.id,
+                    "itemName": oc.item.name,
+                    "quantity": oc.quantity,
+                    "price": float(oc.item.price),
+                    "subtotal": float(oc.item.price * oc.quantity),
+                    "vendorName": oc.item.vendor.name,
+                    "vendorId": oc.item.vendor.id,
+                    "description": oc.item.description or ""
+                })
+            
+            # Group items by vendor for better organization
+            vendors_data = {}
+            for item in items_details:
+                vendor_id = item['vendorId']
+                vendor_name = item['vendorName']
+                
+                if vendor_id not in vendors_data:
+                    vendors_data[vendor_id] = {
+                        "vendorId": vendor_id,
+                        "vendorName": vendor_name,
+                        "items": [],
+                        "vendorTotal": 0
+                    }
+                
+                vendors_data[vendor_id]["items"].append({
+                    "itemId": item["itemId"],
+                    "itemName": item["itemName"],
+                    "quantity": item["quantity"],
+                    "price": item["price"],
+                    "subtotal": item["subtotal"],
+                    "description": item["description"]
+                })
+                vendors_data[vendor_id]["vendorTotal"] += item["subtotal"]
+            
+            # Convert vendors_data dict to list
+            vendors_list = list(vendors_data.values())
+            
+            # Build order data
+            order_data = {
+                "orderId": order.id,
+                "orderDate": order.date,
+                "totalAmount": float(order.total_amount),
+                "status": order.status or "Pending",
+                "paymentMethod": order.payment_method or "Cash",
+                "itemCount": sum(item["quantity"] for item in items_details),
+                "vendorCount": len(vendors_data),
+                "items": items_details,  # All items in a flat list
+                "vendors": vendors_list  # Items grouped by vendor
+            }
+            
+            orders_data.append(order_data)
+        
+        # Add summary data
+        response_data = {
+            "orders": orders_data,
+            "totalOrders": len(orders_data),
+            "customerInfo": {
+                "customerId": customer.id,
+                "customerName": customer.name,
+                "customerEmail": customer.email
+            }
+        }
+        
+        return Response(response_data)

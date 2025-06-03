@@ -58,7 +58,7 @@ MIDDLEWARE = [
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:58488",  # Replace with your frontend domain
     "http://localhost:61729",  # Replace with your frontend domain
-    "http://localhost:53767",  # Replace with your frontend domain
+    "http://localhost:57115",  # Replace with your frontend domain
 ]
 
 ROOT_URLCONF = 'myrecipe.urls'

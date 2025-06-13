@@ -13,6 +13,7 @@ from .models import Order, Menu, Item, Contain, Vendor, Cart, CartItem , Categor
 from django.db.models import Sum, F, Count
 from django.db import transaction
 from rest_framework.decorators import api_view, permission_classes
+from django.shortcuts import get_object_or_404
 
 from .serializers import (
     UserSerializer, 
@@ -777,27 +778,24 @@ class VendorMenuView(APIView):
 
 class VendorMenuDetailView(APIView):
     """
-    Handle operations on specific menu: GET, PUT, DELETE
+    GET: Retrieve a specific menu with its items
+    PUT: Update menu name and/or add new items
+    DELETE: Delete a menu
     """
     permission_classes = [IsAuthenticated]
     
     def get(self, request, menu_id):
-        """Get specific menu details with items"""
+        """Get a specific menu with its items"""
         if not hasattr(request.user, 'vendor'):
             return Response(
-                {"error": "Only vendors can access menus"}, 
+                {"error": "Only vendors can access their menus"}, 
                 status=status.HTTP_403_FORBIDDEN
             )
         
         vendor = request.user.vendor
         
-        try:
-            menu = Menu.objects.get(id=menu_id, vendor=vendor)
-        except Menu.DoesNotExist:
-            return Response(
-                {"error": "Menu not found or doesn't belong to you"}, 
-                status=status.HTTP_404_NOT_FOUND
-            )
+        # Get the menu and ensure it belongs to the vendor
+        menu = get_object_or_404(Menu, id=menu_id, vendor=vendor)
         
         # Get all items for this menu
         items = Item.objects.filter(menu=menu)
@@ -813,14 +811,12 @@ class VendorMenuDetailView(APIView):
                 "description": item.description or "",
                 "categories": categories
             }
-            
             items_data.append(item_data)
         
         menu_data = {
             "menuId": menu.id,
             "menuName": menu.name,
             "date": menu.date,
-            "vendorName": vendor.name,
             "itemCount": len(items_data),
             "items": items_data
         }
@@ -828,106 +824,162 @@ class VendorMenuDetailView(APIView):
         return Response(menu_data, status=status.HTTP_200_OK)
     
     def put(self, request, menu_id):
-        """Update menu name and/or add more items"""
+        """Update menu name and/or add new items"""
         if not hasattr(request.user, 'vendor'):
             return Response(
-                {"error": "Only vendors can update menus"}, 
+                {"error": "Only vendors can update their menus"}, 
                 status=status.HTTP_403_FORBIDDEN
             )
         
         vendor = request.user.vendor
         
-        try:
-            menu = Menu.objects.get(id=menu_id, vendor=vendor)
-        except Menu.DoesNotExist:
+        # Get the menu and ensure it belongs to the vendor
+        menu = get_object_or_404(Menu, id=menu_id, vendor=vendor)
+        
+        # Extract data from request
+        menu_name = request.data.get('menu_name')
+        new_items_data = request.data.get('new_items', [])
+        
+        # Validate that at least one update is provided
+        if not menu_name and not new_items_data:
             return Response(
-                {"error": "Menu not found or doesn't belong to you"}, 
-                status=status.HTTP_404_NOT_FOUND
+                {"error": "Either menu_name or new_items must be provided"}, 
+                status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Update menu name if provided
-        new_menu_name = request.data.get('menu_name')
-        if new_menu_name:
-            menu.name = new_menu_name
-            menu.save()
-        
-        # Add new items if provided
-        new_items_data = request.data.get('new_items', [])
-        created_items = []
-        
-        if new_items_data:
-            try:
-                with transaction.atomic():
+        try:
+            with transaction.atomic():
+                # Update menu name if provided - ONLY update the name field
+                if menu_name and menu_name.strip():
+                    new_name = menu_name.strip()
+                    if new_name != menu.name:  # Only save if name actually changed
+                        menu.name = new_name
+                        menu.save(update_fields=['name'])  # FIXED: Only update name field, leave date untouched
+                
+                created_items = []
+                
+                # Add new items if provided
+                if new_items_data and isinstance(new_items_data, list):
                     for item_data in new_items_data:
-                        if not item_data.get('name') or not item_data.get('price'):
-                            continue
+                        # Validate item data
+                        if not item_data.get('name') or not item_data.get('name').strip():
+                            return Response(
+                                {"error": "Item name is required and cannot be empty"}, 
+                                status=status.HTTP_400_BAD_REQUEST
+                            )
                         
+                        if not item_data.get('price'):
+                            return Response(
+                                {"error": "Item price is required"}, 
+                                status=status.HTTP_400_BAD_REQUEST
+                            )
+                        
+                        try:
+                            price = float(item_data.get('price'))
+                            if price < 0:
+                                return Response(
+                                    {"error": "Item price cannot be negative"}, 
+                                    status=status.HTTP_400_BAD_REQUEST
+                                )
+                        except (TypeError, ValueError):
+                            return Response(
+                                {"error": "Item price must be a valid number"}, 
+                                status=status.HTTP_400_BAD_REQUEST
+                            )
+                        
+                        # Create the item
                         item = Item.objects.create(
                             vendor=vendor,
                             menu=menu,
-                            name=item_data['name'],
-                            price=float(item_data['price']),
-                            description=item_data.get('description', '')
+                            name=item_data['name'].strip(),
+                            price=price,
+                            description=item_data.get('description', '').strip()
                         )
                         
-                        # Handle categories
+                        # Handle categories if provided
                         categories_data = item_data.get('categories', [])
                         created_categories = []
                         
-                        for category_name in categories_data:
-                            if category_name.strip():
-                                category = Category.objects.create(
-                                    item=item,
-                                    name=category_name.strip(),
-                                    description=f"Category for {item.name}"
-                                )
-                                created_categories.append(category_name.strip())
+                        if categories_data:
+                            for category_name in categories_data:
+                                if category_name and category_name.strip():
+                                    category = Category.objects.create(
+                                        item=item,
+                                        name=category_name.strip(),
+                                        description=f"Category for {item.name}"
+                                    )
+                                    created_categories.append(category_name.strip())
                         
-                        created_items.append({
+                        item_response_data = {
                             "itemId": item.id,
                             "itemName": item.name,
                             "price": float(item.price),
                             "description": item.description,
                             "categories": created_categories
-                        })
-            
-            except Exception as e:
-                return Response(
-                    {"error": f"Failed to add items: {str(e)}"}, 
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-        
-        return Response({
-            "message": "Menu updated successfully",
-            "menuName": menu.name,
-            "newItemsAdded": len(created_items),
-            "newItems": created_items
-        }, status=status.HTTP_200_OK)
+                        }
+                        
+                        created_items.append(item_response_data)
+                
+                # Get updated menu data
+                all_items = Item.objects.filter(menu=menu)
+                all_items_data = []
+                
+                for item in all_items:
+                    categories = list(item.categories.values_list('name', flat=True))
+                    
+                    item_data = {
+                        "itemId": item.id,
+                        "itemName": item.name,
+                        "price": float(item.price),
+                        "description": item.description or "",
+                        "categories": categories
+                    }
+                    all_items_data.append(item_data)
+                
+                response_data = {
+                    "message": "Menu updated successfully",
+                    "menu": {
+                        "menuId": menu.id,
+                        "menuName": menu.name,
+                        "date": menu.date,
+                        "itemCount": len(all_items_data),
+                        "items": all_items_data
+                    },
+                    "newItemsAdded": len(created_items)
+                }
+                
+                return Response(response_data, status=status.HTTP_200_OK)
+                
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to update menu: {str(e)}"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     def delete(self, request, menu_id):
-        """Delete a menu and all its items"""
+        """Delete a menu"""
         if not hasattr(request.user, 'vendor'):
             return Response(
-                {"error": "Only vendors can delete menus"}, 
+                {"error": "Only vendors can delete their menus"}, 
                 status=status.HTTP_403_FORBIDDEN
             )
         
         vendor = request.user.vendor
         
+        # Get the menu and ensure it belongs to the vendor
+        menu = get_object_or_404(Menu, id=menu_id, vendor=vendor)
+        
         try:
-            menu = Menu.objects.get(id=menu_id, vendor=vendor)
             menu_name = menu.name
-            items_count = menu.items.count()
+            menu.delete()
             
-            menu.delete()  # This will also delete related items due to CASCADE
-            
-            return Response({
-                "message": f"Menu '{menu_name}' deleted successfully",
-                "deletedItemsCount": items_count
-            }, status=status.HTTP_200_OK)
-            
-        except Menu.DoesNotExist:
             return Response(
-                {"error": "Menu not found or doesn't belong to you"}, 
-                status=status.HTTP_404_NOT_FOUND
+                {"message": f"Menu '{menu_name}' deleted successfully"}, 
+                status=status.HTTP_200_OK
+            )
+            
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to delete menu: {str(e)}"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

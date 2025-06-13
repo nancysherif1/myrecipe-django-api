@@ -9,8 +9,10 @@ from django.contrib.auth.tokens import default_token_generator
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from django.utils.encoding import force_bytes, force_str
 from django.core.mail import send_mail
-from .models import Order, Menu, Item, Contain, Vendor, Cart, CartItem
+from .models import Order, Menu, Item, Contain, Vendor, Cart, CartItem , Category
 from django.db.models import Sum, F, Count
+from django.db import transaction
+from rest_framework.decorators import api_view, permission_classes
 
 from .serializers import (
     UserSerializer, 
@@ -23,6 +25,8 @@ from .serializers import (
     VendorSerializer,
     CartSerializer,
     CartItemSerializer,
+    # MenuSerializer,
+    ItemSerializer,
 )
 from .models import Customer, Vendor
 
@@ -591,3 +595,339 @@ class CustomerOrdersView(APIView):
         }
         
         return Response(response_data)
+    
+class VendorMenuView(APIView):
+    """
+    GET: Retrieve vendor's own menus with items
+    POST: Create a new menu with items for the vendor
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        """Get all menus and items for the authenticated vendor"""
+        # Check if user is a vendor
+        if not hasattr(request.user, 'vendor'):
+            return Response(
+                {"error": "Only vendors can access their menus"}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        vendor = request.user.vendor
+        
+        # Get all menus for this vendor
+        menus = Menu.objects.filter(vendor=vendor).order_by('-date')
+        
+        menus_data = []
+        
+        for menu in menus:
+            # Get all items for this menu
+            items = Item.objects.filter(menu=menu)
+            
+            items_data = []
+            for item in items:
+                # Get categories for this item
+                categories = list(item.categories.values_list('name', flat=True))
+                
+                item_data = {
+                    "itemId": item.id,
+                    "itemName": item.name,
+                    "price": float(item.price),
+                    "description": item.description or "",
+                    "categories": categories
+                }
+                
+                items_data.append(item_data)
+            
+            menu_data = {
+                "menuId": menu.id,
+                "menuName": menu.name,
+                "date": menu.date,
+                "itemCount": len(items_data),
+                "items": items_data
+            }
+            
+            menus_data.append(menu_data)
+        
+        response_data = {
+            "vendorInfo": {
+                "vendorId": vendor.id,
+                "vendorName": vendor.name,
+                "location": vendor.location,
+                "workingHours": vendor.working_hours
+            },
+            "menus": menus_data,
+            "totalMenus": len(menus_data)
+        }
+        
+        return Response(response_data, status=status.HTTP_200_OK)
+    
+    def post(self, request):
+        """Create a new menu with items for the authenticated vendor"""
+        # Check if user is a vendor
+        if not hasattr(request.user, 'vendor'):
+            return Response(
+                {"error": "Only vendors can create menus"}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        vendor = request.user.vendor
+        
+        # Extract data from request
+        menu_name = request.data.get('menu_name')
+        items_data = request.data.get('items', [])
+        
+        # Validate required fields
+        if not menu_name:
+            return Response(
+                {"error": "Menu name is required"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if not items_data or not isinstance(items_data, list):
+            return Response(
+                {"error": "Items list is required and must be a non-empty array"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate items data
+        for i, item_data in enumerate(items_data):
+            if not item_data.get('name'):
+                return Response(
+                    {"error": f"Item {i+1}: name is required"}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if not item_data.get('price'):
+                return Response(
+                    {"error": f"Item {i+1}: price is required"}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            try:
+                float(item_data.get('price'))
+            except (TypeError, ValueError):
+                return Response(
+                    {"error": f"Item {i+1}: price must be a valid number"}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        try:
+            with transaction.atomic():
+                # Create the menu
+                menu = Menu.objects.create(
+                    vendor=vendor,
+                    name=menu_name
+                )
+                
+                created_items = []
+                
+                # Create items for the menu
+                for item_data in items_data:
+                    item = Item.objects.create(
+                        vendor=vendor,
+                        menu=menu,
+                        name=item_data['name'],
+                        price=float(item_data['price']),
+                        description=item_data.get('description', '')
+                    )
+                    
+                    # Handle categories if provided
+                    categories_data = item_data.get('categories', [])
+                    created_categories = []
+                    
+                    for category_name in categories_data:
+                        if category_name.strip():  # Only create non-empty categories
+                            category = Category.objects.create(
+                                item=item,
+                                name=category_name.strip(),
+                                description=f"Category for {item.name}"
+                            )
+                            created_categories.append(category_name.strip())
+                    
+                    item_response_data = {
+                        "itemId": item.id,
+                        "itemName": item.name,
+                        "price": float(item.price),
+                        "description": item.description,
+                        "categories": created_categories
+                    }
+                    
+                    created_items.append(item_response_data)
+                
+                # Prepare success response
+                response_data = {
+                    "message": "Menu created successfully",
+                    "menu": {
+                        "menuId": menu.id,
+                        "menuName": menu.name,
+                        "date": menu.date,
+                        "vendorName": vendor.name,
+                        "itemCount": len(created_items),
+                        "items": created_items
+                    }
+                }
+                
+                return Response(response_data, status=status.HTTP_201_CREATED)
+                
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to create menu: {str(e)}"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+class VendorMenuDetailView(APIView):
+    """
+    Handle operations on specific menu: GET, PUT, DELETE
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, menu_id):
+        """Get specific menu details with items"""
+        if not hasattr(request.user, 'vendor'):
+            return Response(
+                {"error": "Only vendors can access menus"}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        vendor = request.user.vendor
+        
+        try:
+            menu = Menu.objects.get(id=menu_id, vendor=vendor)
+        except Menu.DoesNotExist:
+            return Response(
+                {"error": "Menu not found or doesn't belong to you"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get all items for this menu
+        items = Item.objects.filter(menu=menu)
+        
+        items_data = []
+        for item in items:
+            categories = list(item.categories.values_list('name', flat=True))
+            
+            item_data = {
+                "itemId": item.id,
+                "itemName": item.name,
+                "price": float(item.price),
+                "description": item.description or "",
+                "categories": categories
+            }
+            
+            items_data.append(item_data)
+        
+        menu_data = {
+            "menuId": menu.id,
+            "menuName": menu.name,
+            "date": menu.date,
+            "vendorName": vendor.name,
+            "itemCount": len(items_data),
+            "items": items_data
+        }
+        
+        return Response(menu_data, status=status.HTTP_200_OK)
+    
+    def put(self, request, menu_id):
+        """Update menu name and/or add more items"""
+        if not hasattr(request.user, 'vendor'):
+            return Response(
+                {"error": "Only vendors can update menus"}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        vendor = request.user.vendor
+        
+        try:
+            menu = Menu.objects.get(id=menu_id, vendor=vendor)
+        except Menu.DoesNotExist:
+            return Response(
+                {"error": "Menu not found or doesn't belong to you"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Update menu name if provided
+        new_menu_name = request.data.get('menu_name')
+        if new_menu_name:
+            menu.name = new_menu_name
+            menu.save()
+        
+        # Add new items if provided
+        new_items_data = request.data.get('new_items', [])
+        created_items = []
+        
+        if new_items_data:
+            try:
+                with transaction.atomic():
+                    for item_data in new_items_data:
+                        if not item_data.get('name') or not item_data.get('price'):
+                            continue
+                        
+                        item = Item.objects.create(
+                            vendor=vendor,
+                            menu=menu,
+                            name=item_data['name'],
+                            price=float(item_data['price']),
+                            description=item_data.get('description', '')
+                        )
+                        
+                        # Handle categories
+                        categories_data = item_data.get('categories', [])
+                        created_categories = []
+                        
+                        for category_name in categories_data:
+                            if category_name.strip():
+                                category = Category.objects.create(
+                                    item=item,
+                                    name=category_name.strip(),
+                                    description=f"Category for {item.name}"
+                                )
+                                created_categories.append(category_name.strip())
+                        
+                        created_items.append({
+                            "itemId": item.id,
+                            "itemName": item.name,
+                            "price": float(item.price),
+                            "description": item.description,
+                            "categories": created_categories
+                        })
+            
+            except Exception as e:
+                return Response(
+                    {"error": f"Failed to add items: {str(e)}"}, 
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+        
+        return Response({
+            "message": "Menu updated successfully",
+            "menuName": menu.name,
+            "newItemsAdded": len(created_items),
+            "newItems": created_items
+        }, status=status.HTTP_200_OK)
+    
+    def delete(self, request, menu_id):
+        """Delete a menu and all its items"""
+        if not hasattr(request.user, 'vendor'):
+            return Response(
+                {"error": "Only vendors can delete menus"}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        vendor = request.user.vendor
+        
+        try:
+            menu = Menu.objects.get(id=menu_id, vendor=vendor)
+            menu_name = menu.name
+            items_count = menu.items.count()
+            
+            menu.delete()  # This will also delete related items due to CASCADE
+            
+            return Response({
+                "message": f"Menu '{menu_name}' deleted successfully",
+                "deletedItemsCount": items_count
+            }, status=status.HTTP_200_OK)
+            
+        except Menu.DoesNotExist:
+            return Response(
+                {"error": "Menu not found or doesn't belong to you"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )

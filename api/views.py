@@ -983,3 +983,82 @@ class VendorMenuDetailView(APIView):
                 {"error": f"Failed to delete menu: {str(e)}"}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+        
+class VendorMenuItemView(APIView):
+    """
+    DELETE: Delete a specific item from a menu
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def delete(self, request, menu_id, item_id):
+        """Delete a specific item from a menu"""
+        # Check if user is a vendor
+        if not hasattr(request.user, 'vendor'):
+            return Response(
+                {"error": "Only vendors can delete menu items"}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        vendor = request.user.vendor
+        
+        try:
+            # Get the menu and ensure it belongs to the vendor
+            menu = Menu.objects.get(id=menu_id, vendor=vendor)
+        except Menu.DoesNotExist:
+            return Response(
+                {"error": "Menu not found or doesn't belong to you"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        try:
+            # Get the item and ensure it belongs to the menu and vendor
+            item = Item.objects.get(id=item_id, menu=menu, vendor=vendor)
+        except Item.DoesNotExist:
+            return Response(
+                {"error": "Item not found in this menu or doesn't belong to you"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        try:
+            # Store item details before deletion
+            item_name = item.name
+            item_price = float(item.price)
+            
+            # Check if item is used in any existing orders
+            order_contains = Contain.objects.filter(item=item)
+            if order_contains.exists():
+                return Response(
+                    {
+                        "error": f"Cannot delete '{item_name}' because it's part of existing orders",
+                        "suggestion": "Items that are part of orders cannot be deleted to maintain order history integrity"
+                    }, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Delete the item (categories will be deleted automatically due to CASCADE)
+            item.delete()
+            
+            # Get updated menu statistics
+            remaining_items = Item.objects.filter(menu=menu).count()
+            
+            response_data = {
+                "message": f"Item '{item_name}' deleted successfully from menu '{menu.name}'",
+                "deletedItem": {
+                    "itemId": item_id,
+                    "itemName": item_name,
+                    "price": item_price
+                },
+                "menuInfo": {
+                    "menuId": menu.id,
+                    "menuName": menu.name,
+                    "remainingItems": remaining_items
+                }
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to delete item: {str(e)}"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

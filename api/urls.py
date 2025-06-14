@@ -17,6 +17,7 @@ from .views import (
     CheckoutView,
     VendorMenuView,
     VendorMenuDetailView,
+    VendorMenuItemView
 )
 
 urlpatterns = [
@@ -48,4 +49,7 @@ urlpatterns = [
 
      path('vendor/menus/', VendorMenuView.as_view(), name='vendor-menus'),  # GET: get all menus, POST: create menu
     path('vendor/menus/<int:menu_id>/', VendorMenuDetailView.as_view(), name='vendor-menu-detail'),  # GET, PUT, DELETE specific menu
+
+    path('vendor/menus/<int:menu_id>/items/<int:item_id>/', VendorMenuItemView.as_view(), name='vendor-menu-item'),
+
 ]

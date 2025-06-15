@@ -189,13 +189,14 @@ class VendorOrdersView(APIView):
                     "subtotal": float(oc.item.price * oc.quantity)
                 })
             
-            # Build order data
+            # Build order data with comment
             order_data = {
                 "orderId": order.id,
                 "orderDate": order.date,
                 "customerName": order.customer.name,
                 "customerEmail": order.customer.email,
                 "customerPhone": order.customer.phone,
+                "comment": order.comment or "",  # NEW: Include customer comment for vendor
                 "items": items_details,
                 "totalOrderPrice": float(vendor_total),
                 "status": order.status or "Pending"
@@ -432,13 +433,14 @@ class CheckoutView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        """Process checkout and create order"""
+        """Process checkout and create order with optional comment"""
         customer = getattr(request.user, 'customer', None)
         if not customer:
             return Response({'error': 'Only customers can checkout.'}, status=status.HTTP_403_FORBIDDEN)
 
-        # Get payment method from request (optional)
+        # Get payment method and comment from request (both optional)
         payment_method = request.data.get('payment_method', 'Cash')
+        comment = request.data.get('comment', '').strip()  # NEW: Get comment from request
         
         try:
             cart = Cart.objects.get(customer=customer)
@@ -451,12 +453,13 @@ class CheckoutView(APIView):
             # Calculate total amount
             total_amount = sum(item.item.price * item.quantity for item in cart_items)
             
-            # Create the order
+            # Create the order with comment
             order = Order.objects.create(
                 customer=customer,
                 total_amount=total_amount,
                 status='Pending',
-                payment_method=payment_method
+                payment_method=payment_method,
+                comment=comment if comment else None  # NEW: Add comment to order
             )
             
             # Create order items (Contain relationships)
@@ -488,6 +491,7 @@ class CheckoutView(APIView):
                     'total_amount': float(order.total_amount),
                     'status': order.status,
                     'payment_method': order.payment_method,
+                    'comment': order.comment,  # NEW: Include comment in response
                     'items': order_items_created,
                     'item_count': len(order_items_created)
                 }
@@ -569,13 +573,14 @@ class CustomerOrdersView(APIView):
             # Convert vendors_data dict to list
             vendors_list = list(vendors_data.values())
             
-            # Build order data
+            # Build order data with comment
             order_data = {
                 "orderId": order.id,
                 "orderDate": order.date,
                 "totalAmount": float(order.total_amount),
                 "status": order.status or "Pending",
                 "paymentMethod": order.payment_method or "Cash",
+                "comment": order.comment or "",  # NEW: Include comment in response
                 "itemCount": sum(item["quantity"] for item in items_details),
                 "vendorCount": len(vendors_data),
                 "items": items_details,  # All items in a flat list
@@ -596,7 +601,7 @@ class CustomerOrdersView(APIView):
         }
         
         return Response(response_data)
-    
+        
 class VendorMenuView(APIView):
     """
     GET: Retrieve vendor's own menus with items

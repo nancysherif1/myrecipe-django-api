@@ -88,6 +88,8 @@ class Category(models.Model):
         return f"{self.name} ({self.item.name})"
 
 
+# Add this to your models.py - Update the Order model
+
 class Order(models.Model):
     """
     Stores orders placed by customers.
@@ -97,6 +99,7 @@ class Order(models.Model):
     total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     status = models.CharField(max_length=50, blank=True)
     payment_method = models.CharField(max_length=50, blank=True)
+    comment = models.TextField(blank=True, null=True)  # NEW FIELD: Customer comment for the order
 
     def __str__(self):
         return f"Order #{self.pk} by {self.customer.name}"
